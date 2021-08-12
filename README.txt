@@ -1,10 +1,29 @@
-1.Channel类封装了sockfd,events,revents以及感兴趣事件相对应的回调函数(读,写,关闭,错误),对于上层来说有一个sockfd就会打包成Channel(同时在函数将此Channel保存至感兴趣的事件epoll_event events_.dat.ptr,实际上epoll_event内部保存了fd(event.data.fd), 感兴趣的事件(event.events),channel(event.data.ptr))然后下发到poller上(通过epoll_ctrl()).poller中定义了一个Map:<sockfd, Channel> channels;(可以用来检测eventloop::haschanenl()->poller::haschannel(),removechannel()等),loop()->poll()->epoll_wait()当有事件发生时就能够通过返回的events_.data.ptr找到Channel,然后在loop()中调用Channel->handleEvent()处理事件回调函数.
+使用C++11实现基于epoll的muduo库多reactor模型
 
-2.有两种channel,分别由listenfd(acceptorChannel,之后再度包装成为acceptor(包含listen()功能并包含内部已经定义的注册回调函数handleread()(其中又包含::accept()函数处理新链接到来产生的可读事件)))和connfd(普通的Channel,此channel的回调函数由用户注册给TCPserver->Tcpconnection->channel->根据epoll_wait()的返回事件调用响应函数)封装.
+一个main Reactor负责accept连接，然后把新建立的连接通过轮询方式分配给在某个sub Reactor，该连接的所有操作都在那个sub Reactor所处的线程中完成。
 
-3.每个Eventloop中都包含wakeupfd,然后封装成wakeupchanne.此wakeupfd由系统函数::eventfd()创建,创建一个“eventfd对象”，这个对象能被用户空间应用用作一个事件等待/响应机制，靠内核去响应用户空间应用事件,也就是内核会notify用户空间的一个应用程序.直接调用系统函数write()向eventfd中写入数据,这样epoll_wait()就会检测到有可读事件发生,然后函数返回到loop()函数中执行完已注册的fd事件后会接着执行他的std::vector<Functor> pendingFunctors_;中的回调函数(这些函数是此loop在阻塞状态时,新链接到来后acceptor的回调函数向vector<>中添加的新的connfd::established()函数(此函数会调用connfd内channel::enablereading()函数(其内部会调用update()->epoll_ctl())将此channel注册到eventloop内的epollpoller上).
+1.Channel对sockfd、感兴趣的事件events、所属的eventloop及其读写事件等回调函数进行了封装,主要负责感兴趣事件的注册与IO事件的响应.
 
-4.一个Tcpconnection对应一个连接成功的客户端,他封装了channel,buffer等,还实现了接受到达的数据存入缓冲区,也可发送数据,最终都是buffer通过调用系统函数::read(),write()来实现.
+2.Acceptor主要封装了listenfd以及当有新连接到来时的回调函数,此回调函数主要调用accept()函数接收新连接.
 
-5.没有做成一个生产者-消费者模型,即mainloop生产链接放入队列中,subloop从同步队列中取链接消费.通过条件变量来进行线程间通信,互斥锁保证线程安全.
+3.TcpConnection封装一个连接成功的sockfd对应的Channel、发送和接收缓冲区以及响应发生事件的回调函数.
+
+4.EPollPoller继承于基类Poller,封装了epoll多路I/O事件分发器来监听事件的发生.
+
+5.EventLoop主要对Channels和EPollPoller进行封装,每个线程只能有一个EventLoop对象，负责连接的管理和事件的处理，使用系统函数eventfd()创建的eventfd来唤醒线程.
+
+6.EventLoopThreadPool用于创建IO线程池，用于把新连接TcpConnection分派到某个EventLoop线程上.
+
+7.TcpServer对Acceptor和EventLoopThreadPool进行封装,用于编写网络服务端，接受客户端的连接。
+
+
+muduo的线程模型为one loop per thread+thread pool模型，每个线程最多只有一个EventLoop，一个fd只能由一个线程读写， TcpConnection所在的线程由其所属的EventLoop决定，TcpServer支持多线程，有两种模式：
+
+(1)单线程，accept与TcpConnection用同一个线程做IO.
+
+(2)多线程，accept与EventLoop在同一个线程，另外创建一个EventLoopThreadPool，新到的连接会以轮询调度的方式分配到线程池中.主线程负责IO，工作线程负责计算，使用固定大小的线程池，全部的IO工作都在一个Reactor线程完成，而计算任务交给线程池.
+
+
+
+
 
