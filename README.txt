@@ -12,7 +12,7 @@
 
 5.EventLoop主要对Channels和EPollPoller进行封装,每个线程只能有一个EventLoop对象，负责连接的管理和事件的处理，使用系统函数eventfd()创建的eventfd来唤醒线程.
 
-6.EventLoopThreadPool用于创建IO线程池，用于把新连接TcpConnection分派到某个EventLoop线程上.
+6.EventLoopThreadPool用于创建IO线程池，用于把新连接TcpConnection分派到某个EventLoop线程上.线程池初始化后开始运行时才会真正创建子线程，通过互斥锁和条件变量实现父线程和子线程之间的通信来判断子线程是否创建成功。
 
 7.TcpServer对Acceptor和EventLoopThreadPool进行封装,用于编写网络服务端，接受客户端的连接。
 
@@ -23,6 +23,10 @@ muduo的线程模型为one loop per thread+thread pool模型，每个线程最�
 
 (2)多线程，accept与EventLoop在同一个线程，另外创建一个EventLoopThreadPool，新到的连接会以轮询调度的方式分配到线程池中.主线程负责IO，工作线程负责计算，使用固定大小的线程池，全部的IO工作都在一个Reactor线程完成，而计算任务交给线程池.
 
+C++11相关：
+1.使用C++11中memery库中的智能指针替换boost库中的智能指针，如把boost::scoped_ptr替换为std::unique_ptr等。
+2.使用c++11中thread库替换linux系统的pthread库。
+3.使用C++11的mutex和condition_variable库替换muduo自己封装的互斥量和条件变量。
 
 
 
